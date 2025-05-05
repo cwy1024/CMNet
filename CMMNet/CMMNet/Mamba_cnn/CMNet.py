@@ -98,6 +98,75 @@ class Downsample_block(nn.Module):
         else:
             return y
 
+class ChannelAttention(nn.Module):
+    SeedSed(seed=10)
+
+    def __init__(self, in_planes, ratio=16):
+        super(ChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+        self.fc1 = nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False)
+        self.relu1 = nn.ReLU()
+        self.fc2 = nn.Conv2d(in_planes // ratio, in_planes, 1, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = self.fc2(self.relu1(self.fc1(self.avg_pool(x))))
+        max_out = self.fc2(self.relu1(self.fc1(self.max_pool(x))))
+        out = avg_out + max_out
+        return self.sigmoid(out)
+
+
+class SpatialAttention1(nn.Module):
+    SeedSed(seed=10)
+
+    def __init__(self):
+        super(SpatialAttention1, self).__init__()
+        self.pz1 = nn.Conv2d(1, 1, kernel_size=3, dilation=1, padding=1, stride=1)
+        self.pz2 = nn.Conv2d(1, 1, kernel_size=3, dilation=2, padding=2, stride=1)
+        self.pz3 = nn.Conv2d(1, 1, kernel_size=3, dilation=3, padding=3, stride=1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x = torch.mean(x, dim=1, keepdim=True)
+        x = self.pz3(self.pz2(self.pz1(x)))
+        return self.sigmoid(x)
+
+
+class SpatialAttention2(nn.Module):
+    SeedSed(seed=10)
+
+    def __init__(self):
+        super(SpatialAttention2, self).__init__()
+        self.sigmoid = nn.Sigmoid()
+        self.pz1 = nn.Conv2d(1, 1, kernel_size=3, dilation=1, padding=1, stride=1)
+        self.pz2 = nn.Conv2d(1, 1, kernel_size=3, dilation=2, padding=2, stride=1)
+        self.pz3 = nn.Conv2d(1, 1, kernel_size=3, dilation=3, padding=3, stride=1)
+
+    def forward(self, x):
+        x, _ = torch.max(x, dim=1, keepdim=True)
+        x = self.pz3(self.pz2(self.pz1(x)))
+        return self.sigmoid(x)
+
+class DSACA(nn.Module):
+    SeedSed(seed=10)
+
+    def __init__(self, in_planes, ratio=4, ):
+        super(DSACA, self).__init__()
+        self.ca = ChannelAttention(in_planes, ratio)
+        self.sa1 = SpatialAttention1()
+        self.sa2 = SpatialAttention2()
+
+    def forward(self, x):
+        ca_out = self.ca(x)
+        sa1_out = ca_out * (x * self.sa1(x))
+        sa2_out = ca_out * (x * self.sa2(x))
+        # sa1_out = x * self.sa1(x)
+        # sa2_out = x * self.sa2(x)
+        result = sa1_out + sa2_out
+        return result
+
 class CrossChannelAndCrossSpatialEnhance(nn.Module):
     SeedSed(seed=10)
 
@@ -115,12 +184,7 @@ class CrossChannelAndCrossSpatialEnhance(nn.Module):
         self.bn1 = nn.BatchNorm2d(in_channels)
 
         self.conv1x1 = nn.Conv2d((in_channels // 2) * 3, in_channels // 2, kernel_size=1)
-
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        self.linear1 = nn.Linear(in_channels, in_channels // 2)
-        self.linear2 = nn.Linear(in_channels // 2, in_channels // 2)
-        self.CASigmoid = nn.Sigmoid()
+        self.SACA=DSACA(in_channels)
 
     def forward(self, e1, e2):
         x = torch.cat((e1, e2), dim=1)
@@ -136,6 +200,7 @@ class CrossChannelAndCrossSpatialEnhance(nn.Module):
         SAe2 = e2 * Sa
         x = torch.cat((x, SAe1, SAe2), dim=1)
         x = F.relu(self.bn1(self.conv(x)))
+        x=self.SACA(x)
 
         return x
 
